@@ -1,10 +1,4 @@
-# STA 210 final project
 
-This repo will contain all of your project work. Folders and files for relevant pieces of the project will be added as they're assigned in class.
-
-:link: [Instructions](https://sta210-fa22.netlify.app/project-instructions.html)
-
-:link: [Tips + resources](https://sta210-fa22.netlify.app/project-tips.html)
 
 # Project description
 
