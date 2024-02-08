@@ -1,0 +1,397 @@
+---
+title: "7 Dwarves Final Project: Logistic Regression Model to Predict Voter Choice for 2020 Election"
+author: "Team 7 Dwarves - Tali Nam, Malika Rawal, Morgan Bernstein, Lisa Zuo"
+format: pdf
+editor: visual
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: load-pkg-data
+#| warning: false
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(Stat2Data)
+library(patchwork)
+election_data <- read_csv("data/election_data.csv")
+```
+
+## Introduction and Data
+
+### Background and Research Question
+
+Our group is extremely interested in politics, especially with the primary elections that are coming up right around the corner. We want to investigate why people voted the specific ways they did, focusing on their policy beliefs and non-political identities. One may assume that people vote based on a combination of policy positions and social identities. However, as Jenke and Huettel assert in their article, "Issues or Identity? Cognitive Foundations of Voter Choice," identity and policy positions actually compete to determine voter preference. We either vote based on our identity or policy positions, not both. If we follow their model of voter choice based on cognitive science, the increasing political polarization could be attributed to more people voting based on identity.
+
+Can a statistical analysis of voter data could lead to additional insight into how important policy stances are in voter choice in comparison to identity-based metrics? We hypothesize that identity-based predictors, like whether or not a subject lives in a rural area, maybe better predictors of who someone voted for than policy-based predictors, like if a subject favors or opposes background checks for gun purchases.
+
+### The Data
+
+#### Description
+
+The source of the data set is ANES (American National Election Studies). This data is from the 2020 national election and used 8,280 pre-election surveys as well as 7,449 post-election surveys (ANES, 2020). The subjects were random U.S eligible voters and the data was collected through the internet, phone, and video. Our response variable is column V201033, which corresponds to the survey question: For who does the respondent intend to vote for president? The possible answer choices are -9: Refused, -8: Don't Know, -1: Inapplicable, 1: Joe Biden, 2: Donald Trump, 3: Jo Jorgensen, 4: Howie Hawkins, 5: Other Candidate, 11: Specified as don't know, and 12: Specified as refused. We are planning to run a logistic regression, therefore we dropped all respondents who indicated intent to vote for someone other than Joe Biden or Donald Trump (or if they specified refused/don't know).
+
+We removed 1505 observations from the initial 8280 to work with 6775 observations, so about 20% of the data was dropped, indicating about 20% of respondents who indicated intent to vote for a presidential candidate other than Joe Biden or Donald Trump.
+
+#### Predictor Variables
+
+We chose a subset of survey questions that we believed would be representative of people's political views and therefore provide good predictions for who they intended to vote for for president. We only decided to use these few questions as a subset of the original dataset, which includes over 1,700 questions/predictor variables. We felt that a smaller subset of the data would be easier to handle, easier to interpret and give a more straightforward prediction of a respondent's vote in the 2020 election. We wanted to make sure the survey questions we chose represented many facets of life both political ideologies and the identity of the respondent. Therefore, the 7 predictor variables we decided to include in the model are: Self-Placement on Abortion (V201336), Favor/Oppose Background Checks for Gun Purchases (V202339), Tightening Federal Budget Spending on Border Security (V201306), Self-Identified Race/Ethnicity (V201549x), Do You Currently Live in a Rural or Urban Area (V202355), Respondent Age (V201507x), What is Your Political Alignment (V202073).
+
+#### Cleaning
+
+After splitting the data into training (75%) and testing (25%), other steps in our data cleaning process included selecting only the specific predictors we wanted in the model along with our response variable, and mutating the column names so they are more representative of the survey question being asked, rather than the long survey question number. We also made sure to make all of the survey questions to factors (except for age) to represent them as categorical variables with multiple levels, rather than discrete numeric predictors. In addition, many of the survey questions gave 1 or more options for the respondent to not indicate their answer, such as a "don't know" or "refused" column. We believe these specific levels of the categorical variables would be better off put together into an "other" column, so we also included this specification in our data wrangling.
+
+```{r cleaning data}
+election_data |> 
+  mutate(abortion = V201336, gun_backgroundchecks = V202339, fedbudget = V201306, 
+         rural_urban = V202355, race = V201549x, age = V201507x, 
+         political_align = V201200, president_vote = V201033) |> 
+  filter(president_vote == 1 | president_vote == 2) |>
+  select(abortion, gun_backgroundchecks, fedbudget, rural_urban, race, age,
+         political_align, president_vote) |>
+  glimpse()
+```
+
+#### Exploratory Data Analysis
+
+```{r more data wrangling}
+#rename columns, clean up data and make response binary
+data_election <- election_data |> 
+  select(V201336, V202339, V201306, V202355, V201549x, V201507x, 
+         V201200, V201033) |>
+  mutate(abortion = V201336, gun_backgroundchecks = V202339, fedbudget = V201306, 
+         rural_urban = V202355, race = V201549x, age = V201507x, 
+         political_align = V201200, president_vote = V201033) |> 
+  select(abortion, gun_backgroundchecks, fedbudget, rural_urban, race, 
+         age, political_align, president_vote) |>
+  filter(president_vote == 1 | president_vote == 2) 
+
+# Condense other
+data_election <- data_election %>% 
+  mutate(abortion = case_when(abortion == -9 | abortion == -8 | abortion == 5 ~ 0, 
+                              abortion == 1 ~ 1, abortion == 2 ~ 2, abortion == 3 ~ 3, 
+                              abortion == 4 ~ 4),
+         gun_backgroundchecks = case_when(gun_backgroundchecks == -9 | 
+                                            gun_backgroundchecks == -8 |
+                                            gun_backgroundchecks == -7 |
+                                            gun_backgroundchecks == -6 |
+                                            gun_backgroundchecks == -5 ~ 0, 
+                                          gun_backgroundchecks == 1 ~ 1,
+                                          gun_backgroundchecks == 2 ~ 2, 
+                                          gun_backgroundchecks == 3 ~ 3), 
+         fedbudget = case_when(fedbudget == -9 | fedbudget == -8 ~ 0, 
+                               fedbudget == 1 ~ 1, fedbudget == 2 ~ 2, 
+                               fedbudget == 3 ~ 3), 
+         rural_urban = case_when(rural_urban == -9 | rural_urban == -8 |
+                                   rural_urban == -7 | rural_urban == -6 |
+                                   rural_urban == -5 ~ 0, 
+                                 rural_urban == 1 ~ 1, rural_urban == 2 ~ 2, 
+                                 rural_urban == 3 ~ 3, rural_urban == 4 ~ 4), 
+         race = case_when(race == -9 | race == -8 ~ 0, race == 1 ~ 1, race == 2 ~ 2,
+                          race == 3 ~ 3, race == 4 ~ 4, race == 5 ~ 5, race == 6 ~ 6))
+
+#making variables into factors
+data_election$abortion <- as.factor(data_election$abortion)
+data_election$gun_backgroundchecks <- as.factor(data_election$gun_backgroundchecks)
+data_election$fedbudget <- as.factor(data_election$fedbudget)
+data_election$rural_urban <- as.factor(data_election$rural_urban)
+data_election$race <- as.factor(data_election$race)
+data_election$political_align <- as.factor(data_election$political_align)
+data_election$president_vote <- as.factor(data_election$president_vote)
+```
+
+```{r exploratory data analysis, message=F, warning=F}
+response_dist <- data_election |> 
+  mutate(president_vote = ifelse(president_vote == 1, "Joe Biden", "Donald Trump")) |> 
+  ggplot(aes(x = president_vote, fill = president_vote)) +
+  geom_bar() +
+  labs(title = "Intended President Vote",
+      x = "Intended President Vote",
+      y = "Respondents") +
+    theme(legend.position="none")
+
+plot_race <- ggplot(data_election, aes(x = race)) +
+  geom_bar() +
+  labs(title = "Race Distribution",
+       x = "Race", 
+       y = "Respondents")
+
+plot_age <- ggplot(data_election, aes(x = age)) +
+  geom_histogram() +
+  labs(title = "Age distribution", 
+       x = "Age",
+       y = "Respondents")
+
+response_dist + plot_race / plot_age
+```
+
+The response variable (distribution of who respondents intend to vote for President) follows a binomial distribution, which is approximately 50-50. Slightly more respondents indicated their intent to vote for Joe Biden over Donald Trump. This indicates that respondents in the survey are generally representative of U.S. adults, as slightly more Americans did vote for Biden over Trump.
+
+Some significant discoveries from our exploratory analysis of individual variables in our data set were in the distribution of race and age legislation opinions. First, the distribution of race, it was highly skewed in favor of white (Response 1). Additionally, the distribution of age shows that it is approximately evenly distributed, but there are fewer young (under the age of 25) Americans represented. This indicates that there may be some bias in the way the survey was collected. We can still make conclusions from this dataset; however, we wanted to highlight where there is less data which might lead to less accurate predictions for these groups.
+
+```{r possible interaction term}
+data_election |> 
+  mutate(president_vote = ifelse(president_vote == 1, "Joe Biden", "Donald Trump")) |> 
+  ggplot(aes(x = gun_backgroundchecks, fill = president_vote)) +
+  geom_bar(position = "dodge") +
+  facet_grid(~rural_urban) +
+  labs(title = "Possible Interaction Term Between Location and Gun Opinion",
+       subtitle = "Faceted by rural-urban location (1 = rural, 4 = urban, 0 = other)",
+       x = "Stance on Gun Background Checks",
+       y = "Number of Respondents",
+       fill = "Intended Vote")
+```
+
+We explored a possible interaction term between rural_urban location and stance on background checks for guns. When respondents indicated that they resided in a rural location (1), they were more likely to intend to vote for Donald Trump, even if they held opinion 1 (favoring requiring background checks for gun purchases at gun shows or other private sales) as compared to respondents from other locations.
+
+## Methodology
+
+### Checking Conditions and Choosing the Type of Model
+
+We are running a logistic regression model to predict a respondent's response to the question: For whom does the respondent intend to vote for president? As mentioned, we are only looking at respondents who intended to vote for Joe Biden (1) or Donald Trump (2). The three conditions for logistic regression are linearity, randomness, and independence. Given that the survey was conducted of random U.S eligible voters, we know from the context of the analysis that the randomness condition is met. This also gives us insight into the independence condition, since the surveys were conducted randomly it is a reasonable assumption that one person's survey responses did not affect another person's responses, therefore we can also conclude that the independence condition is met.
+
+```{r empirical logit for age}
+emplogitplot1(president_vote ~ age, data = data_election, ngroups = 10)
+```
+
+The only numeric predictor in our model is age, so this is the one we calculated the empirical logit for. All other variables are categorical which we made into factors, therefore we will not assess their linearity. The empirical logit graph for age shows no obvious deviations from a linear relationship with the response, therefore we will assume the condition of linearity is met.
+
+### Interactions
+
+There were interaction terms that we considered including in our model, including between rural-urban identity and stance on gun-background checks and age and political alignment. Additionally, we knew that in more rural areas, hunting is usually more popular than in urban areas, leading to increased gun access. Our EDA between rural-urban identity and gun background checks also indicates the possibility of an interaction term. Lastly, we read an article stating as you grow older you tend to be more conservative due to new trends in society, and fear of economic stability (401(k)), amongst other rationales. All of these thought processes helped us determine the interaction terms used.
+
+However, all models that included interaction effects produced higher AIC and BIC values than our original model which did not have any interactions. AIC and BIC are both measures of model fit where lower values are considered favorable and represent a better model fit to the data. Therefore, because of the lower AIC and BIC values for our model without interactions, we did not include any of the interaction terms in our final model. The model without interactions also had a lower area under the ROC curve, which is another measurement of model fit for logistic regression where a higher value is preferred. See the appendix for more details.
+
+### Selecting our Model
+
+We ultimately chose the model with the lowest BIC/AIC value which was the model with no interaction terms. This model uses the predictor's Self Placement on Abortion, Favor/Oppose Background Checks for Gun Purchases, Tightening Federal Budget Spending on Border Security, Self-Identified Race/Ethnicity, Rural or Urban identity, Age, and Self-Identified Political Alignment to predict whether a respondent planned to vote for Trump or Biden in the 2020 election.
+
+```{r recipe 1 with all predictors}
+# Split data
+set.seed(2020)
+election_split <- initial_split(data_election)
+election_train <- training(election_split)
+election_test <- testing(election_split)
+
+# Specify model
+election_spec <- logistic_reg() %>% 
+  set_engine("glm")
+
+# Recipe without interaction
+election_rec1 <- recipe(president_vote ~ political_align + abortion + gun_backgroundchecks + 
+                         fedbudget + rural_urban + race + age,
+                       data = election_train) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_zv(all_predictors())
+
+#specify workflow
+election_wflow1 <- workflow() %>% 
+  add_model(election_spec) %>% 
+  add_recipe(election_rec1)
+
+#fit model and tidy
+election_model1 <- election_wflow1 |>
+    fit(data = election_train) 
+
+tidy(election_model1) %>% 
+  kable()
+```
+
+## Results
+
+### Model Fit and Predictive Power Assessment
+
+```{r roc curve and auc}
+#making tibble for auc curve w training data
+election_pred_train <- predict(election_model1, election_train, type = "prob") |>
+	bind_cols(election_train)
+#glimpse(election_pred_train)
+
+#looking at auc for training data
+election_pred_train |>
+	roc_auc(truth = president_vote, .pred_1, event_level = "first")
+
+#making tibble for prediction
+election_pred1 <- predict(election_model1, election_test, type = "prob") |>
+	bind_cols(election_test)
+
+#making roc curve
+election_pred1 |>
+	roc_curve(truth = president_vote, .pred_1, event_level = "first") |>
+autoplot()
+
+#looking at area under the curve
+election_pred1 |>
+	roc_auc(truth = president_vote, .pred_1, event_level = "first")
+```
+
+When fit to the testing data, our model performs extremely well! It has an area under the ROC curve of .96, which corresponds to a very good model fit, as the AUC is a numerical representation of how well our model classifies each observation into a binary output. Additionally, our model has a slightly higher AUC (.9604) when fit to the testing data compared with the AUC when fit to the training data (.9521). Both numbers show a good model fit, however since the model performs better on new data it hasn't seen, we have evidence that it is NOT overfitting to the training data.
+
+We also evaluated the AIC and BIC values for our model. These were minimized in the model we decided to use compared with all other models tried, since AIC and BIC are measures of model fit that we want to minimize (see Appendix for details).
+
+**Age:** For each additional year increase in age, on average, the odds of voting for Trump are expected to multiply by 0.987, holding all else constant.
+
+**Political Alignment Summary:** When looking at the respondent's political alignment, we noticed that there is a trend from Slightly Liberal to Extremely Liberal with a dip in the middle for just Liberal. As a respondent becomes increasingly liberal only from slightly to extremely, the odds of voting for Trump are expected to decrease. For example, if the respondent's political alignment is "Slightly Liberal" rather than "Refused," the odds of voting for Trump are expected to multiply by 0.132, holding all else constant. In the case of "Liberal" rather than "Refused," the odds of voting for Trump are multiplied by only 0.097. However, in the case of "Extremely Liberal" rather than "Refused," the odds of voting for Trump are multiplied by 0.160, holding all else constant. (0.160 \> 0.132 for Extremely in comparison to Slightly Liberal).
+
+In the same way, the more conservative a respondent becomes, the odds of voting for Trump increase. If the respondent's political alignment is "Conservative" rather than "Refused", the odds of voting for Trump are expected to multiply by 7.810, holding all else constant. If the respondent's political alignment is "Extremely Conservative" rather than "Refused", the odds of voting for Trump multiply by 8.758, holding all else constant. (8.758 \> 7.810 for Extremely Conservative in comparison to Conservative)
+
+**Abortion Summary:** If the respondent's abortion beliefs are "By law, abortion should never be permitted" rather than "Other", then the odds of voting for Trump are expected to multiply by 1.85, holding all else constant. If the respondent's abortion beliefs are "By law a woman should always be able to obtain an abortion as a matter of personal choice" rather than "Other", the odds of voting for Trump are expected to multiply by 0.414, holding all else constant.
+
+**Federal Budget:** If the respondent's federal budget beliefs are "Decreased" when answering "Should federal spending on tightening border security to prevent illegal immigration be increased, decreased, or kept the same" rather than "Other", the odds of voting for Trump are expected to multiply by 0.138, holding all else constant.  
+
+**Race:** If the respondent's race is "Black, non-Hispanic" rather than "Other", the odds of voting for Trump are expected to multiply by 0.106, holding all else constant.
+
+```{r sensitivity and specificity}
+predict(election_model1, new_data = election_test) |>
+  bind_cols(election_test) |>
+  count(president_vote, .pred_class)
+```
+
+(President Vote 1 is Biden and 2 is Trump) The sensitivity of our model is .8709, and the specificity of our model is .9005. Since we have similar values for both, this means that our model has a fairly similar false negative and false positive rate, meaning it correctly (and incorrectly) predicts respondents to vote for both presidential candidates at a fairly similar rate. This is preferred in our model since we don't have a reason to minimize false positives or false negatives over the other. However, specificity is a bit higher than sensitivity in our case, therefore our model can correctly classify respondents as not voting for Donald Trump when they truly did vote for Joe Biden at a slightly higher rate.
+
+## Discussion and Conclusion
+
+Most of our findings were in line with the political parties' opinions on polarizing issues in our country. When a respondent becomes increasingly liberal, their odds of voting for Donald Trump decrease from slightly to extremely liberal (with a dip below slightly for just Liberal). In the same way, the more conservative a respondent becomes, the more likely they are to vote for Trump. If a respondent's views on abortion are "By law, abortion should never be permitted," rather than "Other", then their odds of voting for Trump increase. However, with a response of "By law, a woman should always be able to obtain an abortion as a matter of personal choice" rather than "Other", the odds of voting for Trump are expected to decrease. This is an indication that it is possible that the more stringent you are about abortion policy, the more likely you are to have voted for Trump. There is also an indication that if a respondent desires less border security they are less likely to have voted for Trump. Lastly, we found that respondents who were "Black, non-Hispanic" are less likely to vote for Trump.
+
+A main goal of our interest in this research project was to determine which factors of a person's identity or political alignment were the most influential in predicting which presidential candidate they voted for. Using a significance level of .05, we determined that the specific categorical predictors of age, political alignment, abortion, federal budget spending on border security, and race were significantly significant when predicting who a subject intended to vote for. Therefore, based on our predictors, we conclude that both policy and identify factors can be used to predict who a person will vote for. We would encourage campaigns to use this information to identify where they should campaign and what they should focus on. Given that federal budget spending on border security and abortion legislation are statistically significant predictors, political campaigns should highlight these aspects of their policy.
+
+**Ideas for Future Work:** We believe that in the future, a more comprehensive way to determine how identity-based and policy-based predictors affect how a respondent votes would be to use smaller elections such as local ones as well as more analysis over time (such as using more than one year of data). In this case, the data was over the entire United States, so there were a lot of other factors to consider such as region. Additionally, adding more predictors to the model would increase the comprehensiveness of the report. 
+
+**Potential Limitations:** There are many potential limitations to the findings of this research project such as Undercoverage and Response Bias. There may be undercoverage due to the polls being taken via the internet, phone, and video but not on paper for those who do not have access. There may be response bias since all of the survey questions have "refused" and "don't know" creating a possibility for those with more extreme views to respond in the categories we filtered for. Additionally, the response variable determines who the respondent intended to vote for, not actually voted for. There could have been changes between the time of this survey to the actual election. Lastly, we only chose a few predictors from the wide variety of survey questions. A more comprehensive report would add additional predictors.
+
+References:
+
+Jenke, L., & Huettel, S. A. (2016). Issues or Identity? Cognitive Foundations of Voter Choice. Trends in cognitive sciences, 20(11), 794. <https://doi.org/10.1016/j.tics.2016.08.013>
+
+American National Election Studies. 2021. ANES 2020 Time Series Study Full Release \[dataset and documentation\]. July 19, 2021 version.[www.electionstudies.org](http://www.electionstudies.org/)
+
+See [data dictionary](https://github.com/sta210-fa22/project-Team-7-Dwarfs/tree/main/data)
+
+\pagebreak
+
+## Appendix
+
+Model 2
+
+```{r Appendix, warning=F, message=F}
+# Model 2
+# Recipe with interaction
+election_rec2 <- recipe(president_vote ~ political_align + abortion + 
+                          gun_backgroundchecks + fedbudget + rural_urban 
+                        + race + age,
+                  #      + income,
+                       data = election_train) %>%
+  step_interact(terms = ~ gun_backgroundchecks:rural_urban) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_zv(all_predictors())
+#specify workflow
+election_wflow2 <- workflow() %>% 
+  add_model(election_spec) %>% 
+  add_recipe(election_rec2)
+#fit model and tidy
+election_model2 <- election_wflow2 |>
+    fit(data = election_train)
+tidy(election_model2) %>% 
+  kable()
+#making tibble for prediction
+election_pred2 <- predict(election_model2, election_test, type = "prob") |>
+	bind_cols(election_test)
+#making roc curve
+election_pred2 |>
+	roc_curve(truth = president_vote, .pred_1, event_level = "first") |>
+autoplot()
+#looking at area under the curve
+election_pred2 |>
+	roc_auc(truth = president_vote, .pred_1, event_level = "first")
+```
+
+Model 3
+
+```{r, warning=F, message=F}
+# Model 3
+#recipe with interaction age and political alignment
+election_rec3 <- recipe(president_vote ~ political_align + abortion 
+                        + gun_backgroundchecks + fedbudget + rural_urban 
+                        + race + age,
+                    #    + income,
+                       data = election_train) %>%
+  step_interact(terms = ~ age:political_align) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_zv(all_predictors())
+#specify workflow
+election_wflow3 <- workflow() %>% 
+  add_model(election_spec) %>% 
+  add_recipe(election_rec3)
+#fit model and tidy
+election_model3 <- election_wflow3 |>
+    fit(data = election_train)
+tidy(election_model3) %>% 
+  kable()
+#making tibble for prediction
+election_pred3 <- predict(election_model3, election_test, type = "prob") |>
+	bind_cols(election_test)
+#making roc curve
+election_pred3 |>
+	roc_curve(truth = president_vote, .pred_1, event_level = "first") |>
+autoplot()
+#looking at area under the curve
+election_pred3 |>
+	roc_auc(truth = president_vote, .pred_1, event_level = "first")
+```
+
+```{r, warning=F, message=F}
+# Model 4
+#recipe with interaction age and income
+#election_rec4 <- recipe(president_vote ~ political_align + abortion 
+#                        + gun_backgroundchecks + fedbudget + rural_urban 
+#                        + race + age + income, 
+#                       data = election_train) %>% 
+#  step_interact(terms = ~ age:income) %>% 
+#  step_dummy(all_nominal_predictors()) %>% 
+#  step_zv(all_predictors())
+#specify workflow
+#election_wflow4 <- workflow() %>% 
+#  add_model(election_spec) %>% 
+#  add_recipe(election_rec4)
+#fit model and tidy
+#election_model4 <- election_wflow4 |>
+#    fit(data = election_train)
+#tidy(election_model4) %>% 
+#  kable()
+#making tibble for prediction
+#election_pred4 <- predict(election_model4, election_test, type = "prob") |>
+#	bind_cols(election_test)
+#making roc curve
+#election_pred4 |>
+#	roc_curve(truth = president_vote, .pred_1, event_level = "first") |>
+#autoplot()
+#looking at area under the curve
+#election_pred4 |>
+#	roc_auc(truth = president_vote, .pred_1, event_level = "first")
+```
+
+AIC and BIC values for all models
+
+Model 1:
+
+```{r}
+glance(election_model1) |>
+  select(AIC, BIC)
+```
+
+Model 2:
+
+```{r}
+glance(election_model2) |>
+  select(AIC, BIC)
+```
+
+Model 3:
+
+```{r}
+glance(election_model3) |>
+  select(AIC, BIC)
+```
